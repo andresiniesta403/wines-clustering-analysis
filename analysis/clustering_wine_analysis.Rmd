@@ -1,0 +1,866 @@
+---
+title: "Análisis de bodegas españolas mediante técnicas de clustering"
+author: "Andrés Mituca Mituca"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    citation_package: biblatex
+    toc: true
+    toc_depth: '2'
+    number_sections: true
+  html_document:
+    toc: true
+    number_sections: false
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+bibliography: references.bib
+csl: apa.csl
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+library(knitr)
+library(cluster)
+library(FactoMineR)
+library(factoextra)
+library(NbClust)
+library(clValid)
+library(readr)
+library(gridExtra)
+```
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+warning = FALSE,     # No mostrar advertencias
+message = FALSE,     # No mostrar mensajes
+fig.align = 'center' # Centrar figuras
+)
+```
+
+# Resumen Ejecutivo
+
+Este proyecto aplica técnicas de **clustering no supervisado** para
+segmentar bodegas españolas a partir de variables económicas clave. Tras
+un proceso riguroso de limpieza de datos, análisis exploratorio y
+validación estadística, se identifican seis perfiles económicos
+claramente diferenciados, que reflejan distintos modelos de negocio
+dentro del sector vitivinícola.
+
+El análisis combina métodos [jerárquicos]{.underline} y de
+[partición,]{.underline} evaluados mediante múltiples **criterios de
+validación interna** (Hopkins, Silhouette, estabilidad), y se apoya en
+[PCA]{.underline} y [gráficos de perfiles]{.underline} para la
+interpretación económica de los resultados. Los hallazgos permiten
+entender la heterogeneidad estructural del sector, con aplicaciones
+potenciales en análisis financiero, diseño de políticas públicas,
+segmentación de clientes o benchmarking empresarial.
+
+# Introducción
+
+El sector vitivinícola español es uno de los más relevantes a nivel
+europeo tanto por volumen de producción como por diversidad empresarial.
+Conviven en él bodegas de carácter familiar con grandes grupos
+empresariales, lo que genera una alta heterogeneidad en tamaño,
+estructura financiera, rentabilidad y eficiencia operativa.
+
+En este contexto, resulta especialmente útil aplicar técnicas de
+aprendizaje no supervisado, como el [**clustering**]{.underline}, que
+permiten identificar patrones latentes y perfiles homogéneos sin imponer
+una clasificación previa. Este enfoque facilita una visión más
+estructurada del sector y aporta valor para distintos agentes económicos
+(empresas, entidades financieras, analistas o administraciones
+públicas).
+
+Este proyecto tiene como finalidad [segmentar bodegas
+españolas]{.underline} a partir de variables económicas, evaluando
+distintos métodos de clustering y seleccionando el más adecuado mediante
+criterios estadísticos y de interpretabilidad económica.
+
+Las técnicas de clustering permiten identificar patrones latentes en los
+datos sin una clasificación previa [@hastie2009elements],
+[@kaufman1990finding].
+
+# Objetivos del Proyecto
+
+El objetivo general de este trabajo es identificar y caracterizar
+perfiles económicos homogéneos de bodegas españolas mediante técnicas de
+clustering.
+
+De forma específica, se persigue:
+
+1)  Preparar y limpiar una base de datos económica garantizando calidad
+    y consistencia.
+
+2)  Analizar la existencia de estructura de agrupamiento en los datos.
+
+3)  Comparar distintos algoritmos de clustering (jerárquicos y de
+    partición).
+
+4)  Seleccionar el método óptimo mediante criterios de validación
+    interna.
+
+5)  Interpretar los clusters desde una perspectiva económica y de
+    negocio.
+
+6)  Analizar la relación de los clusters con variables externas no
+    utilizadas en su construcción.
+
+# Metodología
+
+El análisis se estructura en las siguientes etapas:
+
+1)  [Limpieza y preprocesado de datos]{.underline}
+
+-   Tratamiento de valores faltantes.
+
+-   Identificación y eliminación de valores extremos.
+
+-   Selección de variables relevantes.
+
+2.  [Estandarización]{.underline}
+
+-   Escalado de las variables económicas para evitar dominancias por
+    magnitud.
+
+3.  [Análisis de tendencia al clustering]{.underline}
+
+-   Aplicación del estadístico de Hopkins.
+
+4.  [Clustering]{.underline}
+
+-   Métodos jerárquicos (Ward y media).
+
+-   Métodos de partición (k-medias y k-medoides).
+
+5.  [Validación]{.underline}
+
+-   Coeficiente de Silhouette.
+
+-   Medidas de estabilidad y compacidad (clValid).
+
+6.  [Interpretación]{.underline}
+
+-   Análisis de componentes principales (PCA).
+
+-   Gráficos de perfiles medios.
+
+-   Relación con variables externas.
+
+Este enfoque garantiza tanto rigor estadístico como interpretabilidad
+económica.
+
+El análisis fue realizado en el software **R**, haciendo uso de
+diferentes librerías como: [@Rcoreteam2024], [@factominer],
+[@factoextra] y [@cluster].
+
+```{r datos, fig.height=3.5, fig.width=3.5, message=FALSE, warning=FALSE}
+datos_bodegas <- read_csv("datos/datos_bodegas_limpio_FINAL.csv")
+```
+
+# Limpieza de datos y decisiones metodológicas
+
+Agruparemos las bodegas en función de su contenido económico en los
+distintos parámetros incluidos en el bloque económico para luego
+relacionar los clusters obtenidos con la variable *esta_trip* y
+*valoracion* o con otras variables no consideradas en el análisis.
+Además, [escalaremos]{.underline} los datos, puesto que cada variable
+está medida en diferentes unidades y magnitudes y no queremos que esto
+interfiera en la agrupación.
+
+```{r selvar, fig.height=3.5, fig.width=3.5, message=FALSE, warning=FALSE}
+datos_bodegas_economicos = datos_bodegas[,5:12]
+datos_bodegas_economicos = scale(datos_bodegas_economicos, center = TRUE, scale = TRUE)
+```
+
+## Decisiones clave de preprocesado
+
+Durante el análisis exploratorio se identificaron bodegas con [valores
+extremos]{.underline} en variables económicas clave. Estas observaciones
+distorsionaban significativamente las medidas de tendencia central y
+dispersión, comprometiendo la calidad del clustering.
+
+Se optó por eliminar aproximadamente el **5%** de las bodegas
+identificadas como anómalas mediante consenso de distintos métodos
+estadísticos, en lugar de aplicar transformaciones logarítmicas. Esta
+decisión se fundamenta en que:
+
+-   Los valores extremos parecían errores de registro o casos no
+    representativos del sector.
+
+-   La pérdida de información fue limitada.
+
+-   Se mantuvo la interpretabilidad económica directa de las variables.
+
+Adicionalmente, se imputaron valores faltantes en el bloque económico y
+se seleccionaron los 30 stems con mayor coeficiente de variación en el
+bloque digital, priorizando variables con mayor capacidad discriminante;
+aunque no serán relevantes para el trabajo presente.
+
+------------------------------------------------------------------------
+
+# Medida de distancia y tendencia de agrupamiento
+
+Con el objetivo de analizar el comportamiento económico y observar si
+existe tendencia de agrupamiento de las bodegas, procedemos a comparar
+dos tipos de distancias diferentes: la **distancia de Manhattan** y la
+**distancia euclidiana**.
+
+```{r fig.cap="Distancia euclídea", message=FALSE, warning=FALSE, include=FALSE}
+## Euclídea
+midist <- get_dist(datos_bodegas_economicos, stand = FALSE, method = "euclidean")
+fviz_dist(midist, 
+          gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"),
+          show_labels = TRUE, lab_size = 5)
+```
+
+```{r dist, fig.cap="Distancia de Manhattan", fig.height=5, fig.width=7, message=FALSE, warning=FALSE, include=FALSE}
+## Manhattan
+midistM <- get_dist(datos_bodegas_economicos, stand = FALSE, method = "manhattan")
+fviz_dist(midistM, 
+          gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"),
+          show_labels = TRUE, lab_size = 5)
+```
+
+Tras observar los gráficos obtendidos mediante el análisis (gráficos 5 y 6 del 'Anexo'), obtenemos
+las siguientes conclusiones:
+
+Hacemos uso de la *distancia de Manhattan* en el clustering jerárquico
+(excepto en Ward) porque con variables económicas tan diferentes (euros,
+porcentajes, personas) es más robusta ante posibles outliers que hayan
+quedado.
+
+Además, el gráfico que muestra la [distancia de Manhattan]{.underline}
+(segundo gráfico) muestra bandas horizontales intensas en la parte
+inferior, lo que indica grupos de bodegas con perfiles económicos
+similares; y las líneas naranjas más marcadas sugieren separación más
+clara entre bodegas pequeñas y bodegas grandes.
+
+Para posterior análisis de k-means y demás, preferimos mantener la
+*distancia euclidiana* que viene por defecto, ya que al trabajar con
+datos escalados funciona perfectamente y es la más usada en la
+literatura. Asimismo, ya la habíamos usado en el PCA para detectar
+anomalías, así que mantener la misma métrica da coherencia a todo el
+trabajo en su conjunto.
+
+La tendencia al clustering se evaluó mediante el **estadístico de
+Hopkins** [@hopkins1954test].
+
+```{r hopkins, message=FALSE, warning=FALSE, include=FALSE}
+set.seed(100)
+# Distintos tamaños de submuestras
+myN = c(100, 205, 300, 410)
+# Distintas ejecuciones
+myseed = sample(1:1000, 10)
+
+# Cálculo de los distintos valores del estadístico H
+myhopkins = NULL
+for (i in myN) {
+  for (j in myseed) {
+    tmp = get_clust_tendency(data = datos_bodegas_economicos, n = i, graph = FALSE, seed = j)
+    myhopkins = c(myhopkins, tmp$hopkins_stat)
+  }
+}
+# Resumen descriptivo de los 4 x 10 = 40 valores generados
+summary(myhopkins)
+```
+
+Los valores del estadístico de Hopkins nos confirman una tendencia de
+agrupamiento, puesto que ha sido calculado para diferentes valores de m
+(n en la función) y con diferentes semillas aleatorias, y sus valores
+oscilan entre `r round(min(myhopkins),2)` y `r round(max(myhopkins),2)`.
+
+Para entrar más en profundidad, el Hopkins alrededor del 0,9 deja claro
+que los datos no están dispersos al azar, sino que tienden a agruparse
+de manera bastante marcada. Además, como todos los valores están muy
+juntos, el patrón no parece fruto del ruido, sino algo consistente en
+toda la muestra. En general, este resultado apunta a que **sí hay una
+estructura real de clusters** y que aplicar técnicas de agrupación tiene
+sentido porque los datos “se dejan” segmentar.
+
+**Nota:** pese a poder haber reducido el número de semillas para
+facilitar el cálculo del estadístico, hemos decidido seguir con nuestro
+análisis inicial para asegurar una mayor aleatoriedad.
+
+------------------------------------------------------------------------
+
+# Modelos jerárquicos
+
+La calidad de los clusters se evaluó mediante el **coeficiente de
+Silhouette** [@rousseeuw1987silhouettes].
+
+En primer lugar, aplicaremos [modelos jerárquicos]{.underline}; y cabe
+destacar que, aún conociendo los distintos métodos que existen para el
+cálculo de las distancias entre clusters, utilizaremos el método de Ward
+y el método de de la media para reducir la extensión, aunque somos
+conscientes de la recomendación de uso de varios métodos diferentes.
+
+## Método de Ward
+
+Para obtener el número de clusters óptimo, combinaremos los criterios
+del [coeficiente de Silhouette medio]{.underline} y la [varianza
+intra-cluster]{.underline}, y fijaremos en 10 el máximo número de
+clusters permitido (gráfico 7 del 'Anexo').
+
+```{r koptJER, fig.height=4, fig.width=8, message=FALSE, warning=FALSE, include=FALSE}
+library(gridExtra)
+p1= fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = hcut, hc_method = "ward.D2",
+             method = "silhouette", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+p2 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = hcut, hc_method = "ward.D2",
+             method = "wss", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+Teniendo los datos ya escalados y centrados, podemos fijarnos únicamente
+en la estructura real de los grupos sin que una variable domine al
+resto. Aunque el [silhouette]{.underline} alcanza su máximo en k=2, a
+partir de ese punto se observa una mejora sostenida hasta valores
+cercanos a 5–6, donde se estabiliza sin caídas bruscas. El método del
+codo también muestra un cambio notable en esa zona, indicando que añadir
+más clusters luego apenas reduce la variabilidad. Por lo tanto, $k≈6$
+ofrece un equilibrio razonable entre detalle e interpretabilidad,
+permitiendo distinguir perfiles económicos distintos entre bodegas sin
+fragmentar en exceso la muestra.
+
+```{r ward, echo=FALSE, fig.height=5, fig.width=8, message=FALSE, warning=FALSE}
+clust1 = hclust(midist, method="ward.D2")
+grupos1 = cutree(clust1, k=6)
+table(grupos1)
+```
+
+Al cortar en 6 clusters con [ward.D2]{.underline} obtenemos grupos de
+tamaños muy distintos, lo cual encaja con la realidad económica del
+sector: muchas bodegas pequeñas (grupo 1) y pocas muy grandes con
+estructuras financieras específicas (grupos 2 y 6). La presencia de
+grupos intermedios refleja distintos modelos de negocio y niveles de
+rentabilidad y activos. En conjunto, la partición en 6 parece capturar
+bien esa *heterogeneidad* sin forzar divisiones artificiales.
+
+## Método de la media
+
+Para obtener el número de clusters óptimo, de nuevo combinaremos los
+criterios del [coeficiente de Silhouette medio]{.underline} y la
+[varianza intra-cluster]{.underline}, y fijaremos en 10 el máximo número
+de clusters permitido (gráfico 9 del 'Anexo').
+
+```{r koptJER2, fig.height=4, fig.width=8, message=FALSE, warning=FALSE, include=FALSE}
+p1= fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = hcut, hc_method = "average",
+             method = "silhouette", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+p2 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = hcut, hc_method = "average",
+             method = "wss", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+En el gráfico del *silhouette* se observa un máximo claro en k=2, pero a
+partir de ahí los valores se mantienen relativamente altos hasta $k≈6$,
+lo que sugiere que aumentar clusters aporta diferenciación útil sin
+perder calidad. Por su parte, el método del codo muestra una caída
+brusca hasta k=4 y luego una reducción progresiva hasta estabilizarse en
+torno a k=6, indicando que más allá apenas mejora la compactación. Esto
+encaja con la idea de que existen distintos perfiles económicos dentro
+del sector y no solo dos grandes grupos extremos. Por tanto,
+$k alrededor de 6$ parece un punto razonable si buscamos detalle sin
+sobreajustar.
+
+```{r media, echo=FALSE, fig.height=6, fig.width=8, message=FALSE, warning=FALSE}
+clust2 = hclust(midist, method="average")
+grupos2 = cutree(clust2, k=6)
+table(grupos2)
+```
+
+Los resultados del [método de la media]{.underline} generan un *grupo
+dominante* con `r max(table(grupos2))` bodegas y cinco grupos muy
+pequeños, algunos casi residuales. Esto indica que el algoritmo apenas
+encuentra diferencias claras y termina forzando clusters muy
+desequilibrados, señal de que este método no separa bien los perfiles
+económicos de nuestra muestra. Probablemente la estructura real sea más
+rica y el promedio no capte bien la variabilidad interna. Por eso, estos
+resultados respaldan que **Ward** ofrece una segmentación más útil y
+coherente.
+
+------------------------------------------------------------------------
+
+# Métodos de partición
+
+## K-medias
+
+Antes de aplicar el método de [k-medias]{.underline}, procedemos a
+determinar el número de clusters (gráfico 10 del 'Anexo').
+
+```{r koptKmeans, echo=FALSE, fig.height=3, fig.width=7, message=FALSE, warning=FALSE}
+p1 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = kmeans, method = "silhouette", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+p2 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = kmeans, method = "wss", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+Aunque los métodos automáticos señalan que el número óptimo de clusters
+es 2, para el análisis nos interesa trabajar con **k = 6** porque
+permite distinguir mejor los distintos perfiles económicos de las
+bodegas. Con más grupos podemos identificar diferencias en tamaño,
+rentabilidad o volumen de actividad que quedarían demasiado
+simplificadas con solo dos clusters. En este caso, k = 6 proporciona una
+segmentación más útil para interpretar la realidad del sector y tomar
+decisiones más ajustadas.
+
+De esta manera, aplicamos, el método de k-medias con 6 clusters.
+
+```{r kmeans, echo=FALSE, fig.height=3, fig.width=3, message=FALSE, warning=FALSE}
+set.seed(100)
+clust3 <- kmeans(datos_bodegas_economicos, centers = 6, nstart = 100)
+table(clust3$cluster)
+```
+
+## K-medoides
+
+Probaremos como última opción el método de los k-medoides que, en
+teoría, sería más robusto frente a los valores atípicos.
+
+En este algoritmo también es necesario determinar a priori el número de
+clusters (gráfico 11 del 'Anexo').
+
+```{r koptPam, fig.height=4, fig.width=8, message=FALSE, warning=FALSE, include=FALSE}
+p1 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = pam, method = "silhouette", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+p2 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = pam, method = "wss", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+Como conclusión del apartado presente, determinamos que según ambos
+criterios, podemos fijar en *6* el número de clusters óptimo para
+nuestro estudio.
+
+```{r pam, echo=FALSE, fig.height=3, fig.width=3, message=FALSE, warning=FALSE}
+clust4 <- pam(datos_bodegas_economicos, k = 6)
+table(clust4$clustering)
+```
+
+------------------------------------------------------------------------
+
+# Selección y validación del método de clustering
+
+Teniendo en cuenta los resultados anteriores, procedemos a utilizar el
+criterio del [coeficiente de Silhouette]{.underline} y la [variabilidad
+intra-cluster]{.underline} para validar los resultados y decidir con
+cuáles nos quedamos.
+
+```{r silhouette, echo=FALSE, fig.cap="Comparación de métodos", fig.height=4, fig.width=8, message=FALSE, warning=FALSE}
+par(mfrow = c(1,3))
+library(RColorBrewer)
+colores = brewer.pal(6, name = "Paired")
+plot(silhouette(grupos1, midist), col=colores[1:6], border=NA, main = "WARD")
+plot(silhouette(clust3$cluster, midist), col=colores[1:6], border=NA, main = "K-MEDIAS")
+plot(silhouette(clust4$clustering, midist), col=colores, border=NA, main = "K-MEDOIDES")
+```
+
+En nuestro caso, el gráfico de **k-medias** es el que muestra una
+estructura más equilibrada: mantiene un *silhouette* cercano a **0,3**,
+con menos observaciones en la zona negativa y una forma más limpia que
+facilita interpretar los seis grupos. El método de **k-medoides** sería
+la segunda mejor opción, aunque presenta más dispersión dentro de
+algunos clusters. Por eso optamos por **k-medias**, que ofrece una
+segmentación más estable y útil para el análisis económico de las
+bodegas.
+
+Asimismo, decidimos observar a continuación otros métodos de validación
+del clustering (gráfico 12 del 'Anexo').
+
+```{r validation, echo=FALSE, fig.height=3, fig.width=9, message=FALSE, warning=FALSE}
+metodos = c("hierarchical","kmeans","pam")
+validacion = suppressMessages(clValid(datos_bodegas_economicos, nClust = 6:9, metric = "euclidean", 
+                      clMethods = metodos, 
+                      validation = c("internal", "stability"),
+                      method = "ward"))
+optimalScores(validacion)
+```
+
+De esta manera, observamos que **k-medias** es el método que eligen la
+mayoría de los criterios. El número de clusters no parece estar tan
+claro, aunque es de *k=6* en la mayoría de los citerios (4/7), por lo
+que usaremos 6 clusters para el análisis.
+
+------------------------------------------------------------------------
+
+# Interpretación de los resultados del clustering
+
+Una vez seleccionado el método y número de clusters que mejor parece
+funcionar en nuestros datos; en nuestro caso, *k-medias* y *k=6*
+clusters, procedemos con la interpretación o caracterización de los
+clusters a partir de las variables utilizadas para crearlos. Finalmente,
+estudiaremos la relación de los clusters con otras variables que no han
+intervenido en la definición de los clusters.
+
+## PCA
+
+Para facilitar la interpretación de los clusters se utilizó el
+**Análisis de Componentes Principales (PCA)** [@jolliffe2002principal].
+
+En primer lugar, vamos a utilizar el [PCA]{.underline} para ver cuáles
+de las variables utilizadas en el análisis clustering han contribuido
+más a la determinación de los clusters obtenidos mediante k-medias.
+Utilizaremos los clusters como variable suplementaria para poder después
+colorear las observaciones según el cluster al que pertenecen (gráfico 13 del 'Anexo').
+
+```{r PCAkmeans2, fig.height=4, fig.width=6, message=FALSE, warning=FALSE, include=FALSE}
+misclust = factor(clust3$cluster)
+miPCA = PCA(datos_bodegas_economicos, scale.unit = FALSE, graph = FALSE)
+eig.val <- get_eigenvalue(miPCA)
+VPmedio = 100 * (1/nrow(eig.val))
+fviz_eig(miPCA, addlabels = TRUE) +
+  geom_hline(yintercept=VPmedio, linetype=2, color="red")
+```
+
+Pese a que soy conocedor de que sería suficiente elegir 3 componentes
+principales, exploraré las 4 primeras por si aportan información
+adicional, ya que es posible representar la cuarta sin incrementar el
+número de gráficos.
+
+```{r PCAkmeansPlots, echo=FALSE, fig.cap="PCA para clustering", fig.height=5.5, fig.width=7.8, message=FALSE, warning=FALSE}
+misclust = factor(clust3$cluster)
+miPCA = PCA(datos_bodegas_economicos, scale.unit = FALSE, graph = FALSE)
+
+colores = brewer.pal(6, name = "Dark2")
+p1 = fviz_pca_ind(miPCA, geom = "point", habillage = misclust, addEllipses = FALSE, 
+                  palette = colores)
+p2 = fviz_pca_var(miPCA, repel = TRUE, col.var = "contrib",
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+p3 = fviz_pca_ind(miPCA, geom = "point", habillage = misclust, addEllipses = FALSE, 
+                  axes = 3:4, palette = colores)
+p4 = fviz_pca_var(miPCA, axes = 3:4, repel = TRUE, col.var = "contrib",
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+grid.arrange(p1,p2,p3,p4, nrow = 2)
+```
+
+En el plano principal (Dim1 y Dim2) se ve que la primera dimensión
+separa sobre todo por **tamaño económico**, ya que variables como
+*ingresos*, *valor añadido*, *trabajadores* o *activo total* apuntan
+claramente en esa dirección. Los grupos 2 y 6 se alejan más del centro,
+lo que encaja con bodegas de mayor escala o con resultados más extremos.
+La segunda dimensión recoge diferencias ligadas a *rentabilidad* (ROE y
+ROA), que ayudan a distinguir a algunos grupos más dispersos. En los
+ejes 3 y 4 aparecen matices secundarios, con menos peso, pero que
+confirman que resultado del ejercicio y activos siguen marcando
+diferencias entre clusters. En conjunto, el PCA respalda la
+segmentación: los grupos se ordenan principalmente por tamaño y, en
+segundo lugar, por rentabilidad.
+
+## Gráfico de perfiles
+
+El PCA nos ha generado hipótesis sobre las características de cada
+cluster de bodegas, más concretamente, las características económicas.
+Vamos a generar ahora un gráfico alternativo que nos puede ayudar
+también a caracterizar cada cluster y/o corroborar lo observado en el
+PCA. Se trata de representar el perfil medio de cada cluster para
+observar las diferencias entre ellos. Para ello, calcularé en primer
+lugar la media de cada variable para cada cluster y después
+representaremos estos perfiles medios en una única gráfica.
+
+```{r perfiles, echo=FALSE, fig.cap="Gráfico de perfiles medios", fig.height=3.1, fig.width=6.5, message=FALSE, warning=FALSE}
+mediasCluster = aggregate(datos_bodegas_economicos, 
+                          by = list("cluster" = misclust), mean)[,-1]
+rownames(mediasCluster) = paste0("c",1:6)
+
+matplot(t(mediasCluster), type = "l", col = colores, ylab = "", xlab = "", 
+        lwd = 2, lty = 1, main = "Perfil medio de los clusters", xaxt = "n")
+
+# Añadir eje SIN etiquetas
+axis(1, at = 1:ncol(datos_bodegas_economicos), labels = FALSE)
+
+# Añadir etiquetas en diagonal
+text(x = 1:ncol(datos_bodegas_economicos),
+     y = par("usr")[3] - 0.5,   # posición bajo del eje
+     labels = colnames(datos_bodegas_economicos),
+     srt = 25,                 # ROTACIÓN
+     adj = 1,                  # alineación
+     xpd = TRUE,               # permitir ir fuera del marco
+     cex = 0.7)
+
+legend("topleft", as.character(1:6), col = colores, lwd = 2, ncol = 3, bty = "n")
+```
+
+El gráfico de perfiles medios confirma la existencia de seis segmentos
+bien diferenciados:
+
+-   **Cluster 1**: bodegas pequeñas, con bajos niveles de ingresos,
+    activos y rentabilidad.
+
+-   **Clusters 2 y 6**: grandes bodegas con estructuras económicas
+    complejas y elevado volumen de actividad.
+
+-   **Cluster 4**: bodegas con alta eficiencia y rentabilidad relativa.
+
+-   **Clusters 3 y 5**: perfiles intermedios con combinaciones
+    específicas de tamaño y rentabilidad.
+
+Esta segmentación refleja la diversidad estructural del sector
+vitivinícola y valida la utilidad del clustering aplicado.
+
+## Relación de los clusters con otras variables
+
+Con el PCA y el gráfico de perfiles hemos caracterizado cada cluster,
+entendiendo qué variables han contribuido más a definir cada cluster y
+cómo lo han hecho.
+
+Para finalizar, trataremos de encontrar la relación de los clusters con
+otras variables no utilizadas el hacer el clusterir.
+
+Comenzaremos con la variable valoracion. Además, como esta variable es
+continua, la representaremos mediante un gráfico de cajas y bigotes y
+también haremos un posterior **ANOVA**.
+
+```{r rating, echo=FALSE, fig.cap="Boxplot de Valoración y clustering", fig.height=3, fig.width=4.8, message=FALSE, warning=FALSE}
+boxplot(datos_bodegas$valoracion ~ misclust, col = brewer.pal(6, "Dark2"),
+        xlab = "Cluster", ylab = "Valoración")
+mianova = aov(datos_bodegas$valoracion ~ misclust)
+summary(mianova)
+TukeyHSD(mianova)
+```
+
+Por último, procederemos a observar si los clusters tienen relación con
+la variable *esta_trip*.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+round(100*proportions(table(datos_bodegas$esta_trip, misclust), 2),2)
+chisq.test(table(datos_bodegas$esta_trip, misclust), simulate.p.value = TRUE)
+```
+
+Con el *Pearson's Chi-squared test* podemos observar contrastes fuertes
+(por ejemplo, el cluster 6 tiene más de un 50% de bodegas en esta_trip,
+mientras que el 4 apenas llega al 13%). El $\chi^2$ confirma esta
+intuición: con un p-valor de 0.0025 podemos decir que la distribución no
+es aleatoria y que los clusters sí guardan relación con esta_trip. En la
+práctica, esto sugiere que ciertos perfiles económicos están más
+presentes dentro de esta_trip, mientras que otros aparecen sobre todo
+fuera, lo que da pie a interpretar diferencias estratégicas entre
+grupos.
+
+# Conclusiones y aplicaciones prácticas
+
+Este proyecto demuestra que el uso de técnicas de clustering permite
+identificar perfiles económicos claros y consistentes dentro del sector
+vitivinícola español. La segmentación obtenida aporta una visión
+estructurada que va más allá de simples clasificaciones por tamaño.
+
+Los resultados pueden tener aplicaciones prácticas en:
+
+-   Análisis financiero y de riesgo.
+
+-   Diseño de políticas públicas sectoriales.
+
+-   Segmentación de clientes y benchmarking.
+
+-   Estrategias de digitalización diferenciadas.
+
+Desde un punto de vista metodológico, el trabajo evidencia la
+importancia de combinar validación estadística, interpretabilidad
+económica y rigor en el preprocesado, elementos clave en cualquier
+proyecto de análisis de datos aplicado.
+
+# Anexo metodológico
+
+## Lectura de datos inicial y selección y escalado de variables
+
+```{r dato, echo=TRUE, fig.height=3.5, fig.width=3.5, message=FALSE, warning=FALSE}
+datos_bodegas <- read_csv("datos/datos_bodegas_limpio_FINAL.csv")
+```
+
+```{r dat, fig.height=3.5, fig.width=3.5, message=FALSE, warning=FALSE}
+datos_bodegas_economicos = datos_bodegas[,5:12]
+datos_bodegas_economicos = scale(datos_bodegas_economicos, center = TRUE, scale = TRUE)
+```
+
+## Medida de distancia y tendencia de agrupamiento
+
+```{r fig.cap="Distancia euclídea", fig.height=4, fig.width=5.5, message=FALSE, warning=FALSE}
+## Euclídea
+midist <- get_dist(datos_bodegas_economicos, stand = FALSE, method = "euclidean")
+fviz_dist(midist, 
+          gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"),
+          show_labels = TRUE, lab_size = 5)
+```
+
+```{r fig.cap="Distancia de Manhattan", fig.height=4, fig.width=5.5, message=FALSE, warning=FALSE}
+## Manhattan
+midistM <- get_dist(datos_bodegas_economicos, stand = FALSE, method = "manhattan")
+fviz_dist(midistM, 
+          gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"),
+          show_labels = TRUE, lab_size = 5)
+```
+
+## Métodos jerárquicos
+
+### Método de Ward
+
+```{r fig.cap="Dendrograma", fig.height=4, fig.width=5.5, message=FALSE, warning=FALSE}
+fviz_dend(clust1, k=6, cex = 0.4)
+```
+
+```{r fig.cap="Método Ward", fig.height=3, fig.width=6.5, message=FALSE, warning=FALSE}
+library(gridExtra)
+p1= fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = hcut, hc_method = "ward.D2",
+             method = "silhouette", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+p2 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = hcut, hc_method = "ward.D2",
+             method = "wss", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+### Método de la media
+
+```{r fig.cap="Método de la media", fig.height=3, fig.width=6.5, message=FALSE, warning=FALSE}
+p1= fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = hcut, hc_method = "average",
+             method = "silhouette", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+p2 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = hcut, hc_method = "average",
+             method = "wss", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+## Métodos de partición
+
+### K-medias
+
+```{r fig.cap="Método de K-medias", fig.height=3, fig.width=6.5, message=FALSE, warning=FALSE}
+p1 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = kmeans, method = "silhouette", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+p2 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = kmeans, method = "wss", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+### K-medoides
+
+```{r fig.cap="Método de K-medoides", fig.height=3, fig.width=6.5, message=FALSE, warning=FALSE}
+p1 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = pam, method = "silhouette", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+p2 = fviz_nbclust(x = datos_bodegas_economicos, FUNcluster = pam, method = "wss", 
+             k.max = 10, verbose = FALSE) +
+  labs(title = "Numero optimo de clusters")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+## Selección del método clustering
+
+### Comparación de métodos según criterio 'Silhouette'
+
+```{r echo=TRUE, fig.cap="Comparación de métodos", fig.height=4, fig.width=7.5, message=FALSE, warning=FALSE}
+par(mfrow = c(1,3))
+library(RColorBrewer)
+colores = brewer.pal(6, name = "Paired")
+plot(silhouette(grupos1, midist), col=colores[1:6], border=NA, main = "WARD")
+plot(silhouette(clust3$cluster, midist), col=colores[1:6], border=NA, main = "K-MEDIAS")
+plot(silhouette(clust4$clustering, midist), col=colores, border=NA, main = "K-MEDOIDES")
+```
+
+### Selección de número de clusters y métodos según diferentes criterios
+
+```{r validations, echo=TRUE, fig.height=3, fig.width=8, message=FALSE, warning=FALSE}
+metodos = c("hierarchical","kmeans","pam")
+validacion = suppressMessages(clValid(datos_bodegas_economicos, nClust = 6:9, metric = "euclidean", 
+                      clMethods = metodos, 
+                      validation = c("internal", "stability"),
+                      method = "ward"))
+summary(validacion)
+```
+
+## PCA
+
+### Selección de componentes principales
+
+```{r PCAkmeans, fig.cap="Elección de número de PCA's", fig.height=3.5, fig.width=5, message=FALSE, warning=FALSE}
+misclust = factor(clust3$cluster)
+miPCA = PCA(datos_bodegas_economicos, scale.unit = FALSE, graph = FALSE)
+eig.val <- get_eigenvalue(miPCA)
+VPmedio = 100 * (1/nrow(eig.val))
+fviz_eig(miPCA, addlabels = TRUE) +
+  geom_hline(yintercept=VPmedio, linetype=2, color="red")
+```
+
+### Gráfico de componentes principales
+
+```{r PCAkmeansPlot, echo=TRUE, fig.cap="PCA para clustering", fig.height=5.5, fig.width=7.8, message=FALSE, warning=FALSE}
+misclust = factor(clust3$cluster)
+miPCA = PCA(datos_bodegas_economicos, scale.unit = FALSE, graph = FALSE)
+
+colores = brewer.pal(6, name = "Dark2")
+p1 = fviz_pca_ind(miPCA, geom = "point", habillage = misclust, addEllipses = FALSE, 
+                  palette = colores)
+p2 = fviz_pca_var(miPCA, repel = TRUE, col.var = "contrib",
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+p3 = fviz_pca_ind(miPCA, geom = "point", habillage = misclust, addEllipses = FALSE, 
+                  axes = 3:4, palette = colores)
+p4 = fviz_pca_var(miPCA, axes = 3:4, repel = TRUE, col.var = "contrib",
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+grid.arrange(p1,p2,p3,p4, nrow = 2)
+```
+
+## Gráfico de perfiles de clusters
+
+```{r perfil, echo=TRUE, fig.cap="Gráfico de perfiles medios", fig.height=3.1, fig.width=6.5, message=FALSE, warning=FALSE}
+mediasCluster = aggregate(datos_bodegas_economicos, 
+                          by = list("cluster" = misclust), mean)[,-1]
+rownames(mediasCluster) = paste0("c",1:6)
+
+matplot(t(mediasCluster), type = "l", col = colores, ylab = "", xlab = "", 
+        lwd = 2, lty = 1, main = "Perfil medio de los clusters", xaxt = "n")
+
+# Añadir eje SIN etiquetas
+axis(1, at = 1:ncol(datos_bodegas_economicos), labels = FALSE)
+
+# Añadir etiquetas en diagonal
+text(x = 1:ncol(datos_bodegas_economicos),
+     y = par("usr")[3] - 0.5,   # posición bajo del eje
+     labels = colnames(datos_bodegas_economicos),
+     srt = 25,                 # ROTACIÓN
+     adj = 1,                  # alineación
+     xpd = TRUE,               # permitir ir fuera del marco
+     cex = 0.7)
+
+legend("topleft", as.character(1:6), col = colores, lwd = 2, ncol = 3, bty = "n")
+```
+
+## Relación de los clusters con otras variables
+
+### Relación con variable 'valoración'
+
+```{r rate, echo=TRUE, fig.cap="Boxplot de Valoración y clustering", fig.height=3, fig.width=4.8, message=FALSE, warning=FALSE}
+boxplot(datos_bodegas$valoracion ~ misclust, col = brewer.pal(6, "Dark2"),
+        xlab = "Cluster", ylab = "Valoración")
+mianova = aov(datos_bodegas$valoracion ~ misclust)
+summary(mianova)
+TukeyHSD(mianova)
+```
+
+### Relación con variable 'esta_trip'
+
+```{r message=FALSE, warning=FALSE}
+round(100*proportions(table(datos_bodegas$esta_trip, misclust), 2),2)
+chisq.test(table(datos_bodegas$esta_trip, misclust), simulate.p.value = TRUE)
+```
