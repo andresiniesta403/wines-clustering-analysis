@@ -62,6 +62,6 @@ El objetivo es identificar perfiles homogéneos de bodegas que reflejen distinto
 
 ```text
 wine-clustering-analysis/
-├── data/
-├── analysis/
-├── output/
+├── data/        # Cleaned dataset used in the analysis
+├── analysis/    # R Markdown code (reproducible analysis)
+├── output/      # Final PDF report
